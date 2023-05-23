@@ -1,5 +1,5 @@
 import socket
-from threading import Thread
+from threading import Thread, Event
 
 class Protocol:
   def __init__(self, protocol_name, *, parser=None, editor=None):
@@ -40,6 +40,8 @@ class _Connection:
         'type': 'incoming',
         'data': d
       })
+  def close(self):
+    self._socket.close()
     
 
 class ServerSocket:
@@ -68,6 +70,8 @@ class ServerSocket:
     self._on_con = _ig
     self._on_dcon = _ig
     self.dataprotocol = dataprotocol
+    self.terminator = Event()
+    self.runner = None
     
   def set_handler(self, event: str):
     def inner(f):
@@ -81,29 +85,40 @@ class ServerSocket:
     return inner
     
   def run(self, *, max_connections: int=0, bufsize=1024, save_prev=False):
+    if self.runner is not None:
+      return False
     def _listen(conn):
       self._on_con(conn)
       while True:
-        d = conn['socket'].recv(bufsize)
-        if d == 0:
+        d = conn.recv(bufsize)
+        if d == 0 or self.terminator.is_set():
           self._on_dcon(conn)
-          conn['socket'].close()
+          conn.close()
           break
-        d = d.decode()
         d = self.dataprotocol.parse(d)
         conn['seq'] += 1
-        if save_prev:
-          conn['datas'].append({
-            'datetime': datetime.now().timestamp(),
-            'data': d
-          })
         if (p := self._on_recv(d, conn)) is not None:
           proto_fixed = self.dataprotocol.make_edits(p)
-          conn.send(proto_fixed.encode())
+          conn.send(proto_fixed)
     def _run():
       self.socket.listen(max_connections)
       while True:
         sk, addr = self.socket.accept()
+        conn = _Connection(sk, addr, save_prev)
+        t = Thread(target=_listen, args=(conn,))
+        self.connections.append(t)
+        t.start()
+        if self.terminator.is_set():
+          for c in self.connections:
+            t.join()
+          break
+    self.runner = Thread(target=_run)
+    self.runner.start()
+    return self.runner
+  def stop(self):
+    self.terminator.set()
+    self.runner.join()
+    
         
         
         
