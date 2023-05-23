@@ -23,6 +23,9 @@ class ServerSocket:
       if event == 'connect':
         self._on_con = f
       elif event == 'recieve':
-        s
+        self._on_recv = f
+      elif event == 'disconnect':
+        self._on_dcon = f
+    return inner
     
   def run(max_connections: int=0, 
